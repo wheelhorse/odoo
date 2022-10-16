@@ -252,3 +252,18 @@ def date_range(start, end, step=relativedelta(months=1)):
     while dt <= end:
         yield localize(dt)
         dt = dt + step
+
+def get_business_days_per_month(date):
+    weekday_count = 0
+    cal = calendar.Calendar()
+    
+    for week in cal.monthdayscalendar(date.year, date.month):
+        for i, day in enumerate(week):
+            # not this month's day or a weekend
+            if day == 0 or i >= 5:
+                continue
+            # or some other control if desired...
+            weekday_count += 1
+    
+    return weekday_count
+
