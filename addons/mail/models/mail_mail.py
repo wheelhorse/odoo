@@ -401,8 +401,14 @@ class MailMail(models.Model):
         """
         for mail_server_id, smtp_from, batch_ids in self._split_by_mail_configuration():
             smtp_session = None
+
+            #logging.error('Debug on #%s from %s updated to %s',
+            #        mail_server_id, smtp_from, self.env.user.company_id.email_formatted)
+            smtp_from = self.env.user.company_id.email_formatted
+
             try:
                 smtp_session = self.env['ir.mail_server'].connect(mail_server_id=mail_server_id, smtp_from=smtp_from)
+                #logging.error('smtp_session: smtp_from %s', smtp_session.smtp_from)
             except Exception as exc:
                 if raise_exception:
                     # To be consistent and backward compatible with mail_mail.send() raised
@@ -502,6 +508,8 @@ class MailMail(models.Model):
                 # TDE note: could be great to pre-detect missing to/cc and skip sending it
                 # to go directly to failed state update
                 for email in email_list:
+                    #logging.error('Debug on build_email from %s', mail.email_from)
+                    mail.email_from = self.env.user.company_id.email_formatted
                     msg = IrMailServer.build_email(
                         email_from=mail.email_from,
                         email_to=email.get('email_to'),
