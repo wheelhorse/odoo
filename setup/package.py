@@ -215,7 +215,7 @@ class Docker():
         with open(docker_file_path, 'a') as dockerfile:
             dockerfile.write(DOCKERUSER)
         shutil.copy(os.path.join(self.args.build_dir, 'requirements.txt'), docker_dir)
-        run_cmd(["docker", "build", "--rm=True", "-t", self.tag, "."], chdir=docker_dir, timeout=1200).check_returncode()
+        run_cmd(["docker", "build", "--rm=True", "--progress=plain", "--no-cache", "-t", self.tag, "."], chdir=docker_dir, timeout=1200).check_returncode()
         shutil.rmtree(docker_dir)
 
     def run(self, cmd, build_dir, container_name, user='odoo', exposed_port=None, detach=False, timeout=None):

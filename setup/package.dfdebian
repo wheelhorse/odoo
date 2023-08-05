@@ -1,11 +1,25 @@
 # Please note that this Dockerfile is used for testing nightly builds and should
 # not be used to deploy Odoo
 FROM debian:bullseye
-MAINTAINER Odoo S.A. <info@odoo.com>
+MAINTAINER Fengbo Wu <fengbo_wu@163.com>
 
-RUN apt-get update && \
-    apt-get install -y locales && \
+RUN echo "deb http://mirrors.tencent.com/debian/ bullseye main non-free contrib"                 > /etc/apt/sources.list
+RUN echo "deb-src http://mirrors.tencent.com/debian/ bullseye main non-free contrib"             >> /etc/apt/sources.list
+RUN echo "deb http://mirrors.tencent.com/debian-security/ bullseye-security main"                >> /etc/apt/sources.list
+RUN echo "deb-src http://mirrors.tencent.com/debian-security/ bullseye-security main"            >> /etc/apt/sources.list
+RUN echo "deb http://mirrors.tencent.com/debian/ bullseye-updates main non-free contrib"         >> /etc/apt/sources.list
+RUN echo "deb-src http://mirrors.tencent.com/debian/ bullseye-updates main non-free contrib"     >> /etc/apt/sources.list
+RUN echo "deb http://mirrors.tencent.com/debian/ bullseye-backports main non-free contrib"       >> /etc/apt/sources.list
+RUN echo "deb-src http://mirrors.tencent.com/debian/ bullseye-backports main non-free contrib"   >> /etc/apt/sources.list
+
+#RUN sed -i "s@http://\(deb\|security\).debian.org@http://mirrors.163.com@g" /etc/apt/sources.list
+
+RUN cat /etc/apt/sources.list
+
+RUN apt-get  update && \
+    apt-get install  -y locales curl&& \
     rm -rf /var/lib/apt/lists/*
+
 
 # Reconfigure locales such that postgresql uses UTF-8 encoding
 RUN dpkg-reconfigure locales && \
@@ -14,9 +28,9 @@ RUN dpkg-reconfigure locales && \
 ENV LC_ALL C.UTF-8
 ENV DEBIAN_FRONTEND noninteractive
 
-RUN apt-get update -qq &&  \
-    apt-get upgrade -qq -y && \
-    apt-get install -qq -y\
+RUN apt-get update   -qq &&  \
+    apt-get upgrade   -qq -y && \
+    apt-get install   -qq -y --fix-missing\
         adduser \
         dh-python \
         packaging-dev \
