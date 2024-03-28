@@ -147,7 +147,7 @@ class Contract(models.Model):
             ('state', '=', 'open'), ('kanban_state', '!=', 'blocked'),
             '|',
             '&',
-            ('date_end', '<=', fields.Date.to_string(date.today() + relativedelta(days=7))),
+            ('date_end', '<=', fields.Date.to_string(date.today() + relativedelta(days=31))),
             ('date_end', '>=', fields.Date.to_string(date.today() + relativedelta(days=1))),
             '&',
             ('visa_expire', '<=', fields.Date.to_string(date.today() + relativedelta(days=60))),
