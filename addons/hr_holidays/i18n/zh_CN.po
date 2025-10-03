@@ -94,13 +94,13 @@ msgstr "%(person)s 于 %(leave_type)s: %(duration).2f 天 (%(start)s)"
 #: code:addons/hr_holidays/models/hr_leave.py:0
 #, python-format
 msgid "%(person)s on %(leave_type)s: %(duration).2f hours on %(date)s"
-msgstr "在%(leave_type)s上的%(person)s。在%(date)s上的%(duration).2f小时"
+msgstr "%(person)s 于%(leave_type)s：在%(date)s请假%(duration).2f小时"
 
 #. module: hr_holidays
 #: code:addons/hr_holidays/models/hr_leave_type.py:0
 #, python-format
 msgid "%g remaining out of %g"
-msgstr "%g剩余%g"
+msgstr "剩余%g，共%g"
 
 #. module: hr_holidays
 #: code:addons/hr_holidays/models/hr_leave_accrual_plan.py:0
@@ -112,13 +112,13 @@ msgstr "%s (副本)"
 #: code:addons/hr_holidays/models/hr_leave_allocation.py:0
 #, python-format
 msgid "%s (from %s to %s)"
-msgstr "%s（从%s到%s）。"
+msgstr "%s（从%s到%s）"
 
 #. module: hr_holidays
 #: code:addons/hr_holidays/models/hr_leave_allocation.py:0
 #, python-format
 msgid "%s (from %s to No Limit)"
-msgstr "%s（从%s到无限制）。"
+msgstr "%s（从%s到无限制）"
 
 #. module: hr_holidays
 #: code:addons/hr_holidays/models/hr_leave.py:0
@@ -148,7 +148,7 @@ msgstr "%s 休假：%.2f 小时"
 #: code:addons/hr_holidays/models/hr_leave.py:0
 #, python-format
 msgid "%s: Time Off"
-msgstr "%s:休息时间"
+msgstr "%s：休假"
 
 #. module: hr_holidays
 #: model_terms:ir.ui.view,arch_db:hr_holidays.report_holidayssummary
@@ -170,7 +170,7 @@ msgstr "&lt;/th&gt;"
 msgid ""
 "&lt;td class=\"text-center oe_leftfit oe_rightfit\" style=\"background-"
 "color:"
-msgstr "&lt;td class=\"text-center oe_leftfit oe_rightfit\" style=\"background-颜色:"
+msgstr "&lt;td class=\"text-center oe_leftfit oe_rightfit\" style=\"background-color:"
 
 #. module: hr_holidays
 #: model_terms:ir.ui.view,arch_db:hr_holidays.report_holidayssummary
@@ -529,13 +529,13 @@ msgid ""
 "                    ("
 msgstr ""
 "<span attrs=\"{'invisible': [('holiday_type', '!=', 'employee')]}\">\n"
-"                        员工和您有不同的时区！这里显示的是员工时区的日期和时间\n"
+"                        员工和您有不同的时区！此处日期和时间按员工时区显示\n"
 "                    </span>\n"
 "                    <span attrs=\"{'invisible': [('holiday_type', '!=', 'department')]}\">\n"
-"                        该部门的公司和您的时区不同！这里显示的是该公司时区的日期和时间\n"
+"                        该部门的公司和您的时区不同！此处日期和时间按公司时区显示\n"
 "                    </span>\n"
 "                    <span attrs=\"{'invisible': [('holiday_type', '!=', 'company')]}\">\n"
-"                        公司和您的时区不同！这里显示的公司时区的日期和时间\n"
+"                        公司和您的时区不同！此处日期和时间按公司时区显示\n"
 "                    </span>\n"
 "                    ("
 
@@ -556,8 +556,7 @@ msgid ""
 "<span class=\"fa fa-plane text-warning\" role=\"img\" aria-label=\"To "
 "define\" title=\"On Leave\"/>"
 msgstr ""
-"<span class=\"fa fa-plane text-warning\" role=\"img\" aria-label=\"To "
-"define\" title=\"On Leave\"/>"
+"<span class=\"fa fa-plane text-warning\" role=\"img\" aria-label=\"待定义\" title=\"休假中\"/>"
 
 #. module: hr_holidays
 #: model_terms:ir.ui.view,arch_db:hr_holidays.hr_leave_allocation_view_form
@@ -589,7 +588,7 @@ msgid ""
 "                        </span>"
 msgstr ""
 "<span class=\"o_stat_text\">\n"
-"                           休假到\n"
+"                           休假\n"
 "                        </span>"
 
 #. module: hr_holidays
@@ -601,7 +600,7 @@ msgid ""
 "                        </span>"
 msgstr ""
 "<span class=\"o_stat_text\">\n"
-"                            到\n"
+"                            休假\n"
 "                        </span>"
 
 #. module: hr_holidays
@@ -2172,9 +2171,14 @@ msgid "Leaves Taken"
 msgstr "已休假"
 
 #. module: hr_holidays
+#: model:ir.model.fields.selection,name:hr_holidays.selection__hr_leave_employee_type_report__holiday_status__expired
+#: model:ir.model.fields.selection,name:hr_holidays.selection__hr_leave_report__leave_type__expired
+msgid "Expired Unused"
+msgstr "过期未用"
+
 #: model:ir.model.fields.selection,name:hr_holidays.selection__hr_leave_employee_type_report__holiday_status__left
 msgid "Left"
-msgstr "左"
+msgstr "剩余"
 
 #. module: hr_holidays
 #. openerp-web
@@ -3206,7 +3210,7 @@ msgstr "领取休假在"
 #: model:ir.model.fields.selection,name:hr_holidays.selection__hr_leave_employee_type_report__holiday_status__taken
 #, python-format
 msgid "Taken"
-msgstr "花费"
+msgstr "已休"
 
 #. module: hr_holidays
 #: model:ir.model.fields,field_description:hr_holidays.field_hr_leave_allocation__taken_leave_ids

@@ -18,7 +18,8 @@ class LeaveReport(models.Model):
     holiday_status = fields.Selection([
         ('taken', 'Taken'), #taken = validated
         ('left', 'Left'),
-        ('planned', 'Planned')
+        ('planned', 'Planned'),
+        ('expired', 'Expired')
     ])
     state = fields.Selection([
         ('draft', 'To Submit'),
@@ -51,7 +52,7 @@ class LeaveReport(models.Model):
                     allocation.employee_id as employee_id,
                     CASE
                         WHEN allocation.id = min_allocation_id.min_id
-                            THEN aggregate_allocation.number_of_days - COALESCE(aggregate_leave.number_of_days, 0)
+                            THEN aggregate_allocation.number_of_days - COALESCE(aggregate_leave.number_of_days, 0) - COALESCE(expired_allocation.number_of_days, 0)
                             ELSE 0
                     END as number_of_days,
                     allocation.department_id as department_id,
@@ -82,9 +83,27 @@ class LeaveReport(models.Model):
                     (SELECT employee_id, holiday_status_id,
                         sum(CASE WHEN state IN ('validate', 'validate1') THEN number_of_days ELSE 0 END) as number_of_days
                     FROM hr_leave
-
                     GROUP BY employee_id, holiday_status_id) aggregate_leave
                 on (allocation.employee_id=aggregate_leave.employee_id and allocation.holiday_status_id = aggregate_leave.holiday_status_id)
+
+                /* Obtain the sum of expired unused allocations (as negative values) */
+                LEFT JOIN
+                    (SELECT alloc.employee_id, alloc.holiday_status_id, 
+                            sum(CASE WHEN alloc.date_to < CURRENT_DATE 
+                                          AND (alloc.number_of_days - COALESCE(leaves.number_of_days, 0)) > 0 
+                                     THEN -(alloc.number_of_days - COALESCE(leaves.number_of_days, 0))
+                                     ELSE 0 END) as number_of_days
+                     FROM hr_leave_allocation alloc
+                     LEFT JOIN (SELECT employee_id, holiday_status_id, sum(number_of_days) as number_of_days 
+                               FROM hr_leave WHERE state IN ('validate', 'validate1')
+                               GROUP BY employee_id, holiday_status_id) leaves
+                     ON (alloc.employee_id = leaves.employee_id AND alloc.holiday_status_id = leaves.holiday_status_id)
+                     WHERE alloc.date_to < CURRENT_DATE 
+                           AND alloc.state = 'validate'
+                           AND alloc.active = True
+                           AND (alloc.number_of_days - COALESCE(leaves.number_of_days, 0)) > 0
+                     GROUP BY alloc.employee_id, alloc.holiday_status_id) expired_allocation
+                on (allocation.employee_id=expired_allocation.employee_id and allocation.holiday_status_id=expired_allocation.holiday_status_id)
 
                 UNION ALL SELECT
                     request.employee_id as employee_id,
@@ -101,6 +120,46 @@ class LeaveReport(models.Model):
                     request.employee_company_id as company_id
                     FROM hr_leave as request
                     WHERE request.state IN ('confirm', 'validate', 'validate1')
+
+                UNION ALL SELECT
+                    allocation.employee_id as employee_id,
+                    CASE
+                        WHEN allocation.id = min_allocation_id.min_id
+                            THEN COALESCE(expired_unused.number_of_days, 0)
+                            ELSE 0
+                    END as number_of_days,
+                    allocation.department_id as department_id,
+                    allocation.holiday_status_id as leave_type,
+                    allocation.state as state,
+                    allocation.date_from as date_from,
+                    allocation.date_to as date_to,
+                    'expired' as holiday_status,
+                    allocation.employee_company_id as company_id
+                FROM hr_leave_allocation as allocation
+
+                /* Obtain the minimum id for a given employee and type of leave */
+                LEFT JOIN
+                    (SELECT employee_id, holiday_status_id, min(id) as min_id
+                    FROM hr_leave_allocation GROUP BY employee_id, holiday_status_id) min_allocation_id
+                on (allocation.employee_id=min_allocation_id.employee_id and allocation.holiday_status_id=min_allocation_id.holiday_status_id)
+
+                /* Calculate expired unused allocations (as positive values for display) */
+                LEFT JOIN
+                    (SELECT alloc.employee_id, alloc.holiday_status_id, 
+                            sum(GREATEST(0, alloc.number_of_days - COALESCE(leaves.number_of_days, 0))) as number_of_days
+                     FROM hr_leave_allocation alloc
+                     LEFT JOIN (SELECT employee_id, holiday_status_id, sum(number_of_days) as number_of_days 
+                               FROM hr_leave WHERE state IN ('validate', 'validate1')
+                               GROUP BY employee_id, holiday_status_id) leaves
+                     ON (alloc.employee_id = leaves.employee_id AND alloc.holiday_status_id = leaves.holiday_status_id)
+                     WHERE alloc.date_to < CURRENT_DATE 
+                           AND alloc.state = 'validate'
+                           AND alloc.active = True
+                           AND (alloc.number_of_days - COALESCE(leaves.number_of_days, 0)) > 0
+                     GROUP BY alloc.employee_id, alloc.holiday_status_id) expired_unused
+                on (allocation.employee_id=expired_unused.employee_id and allocation.holiday_status_id=expired_unused.holiday_status_id)
+
+                WHERE COALESCE(expired_unused.number_of_days, 0) > 0
                 ) leaves
             );
         """)
