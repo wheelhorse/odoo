@@ -82,9 +82,9 @@ class LeaveReport(models.Model):
 
                     UNION ALL
 
-                    -- Calculated expired leaves using corrected FIFO logic - one entry per allocation
+                    -- Calculated expired leaves using ROBUST FIFO logic with working day validation
                     SELECT
-                        expired.allocation_id AS original_id, -- Use actual allocation ID for ordering
+                        expired.allocation_id AS original_id,
                         expired.employee_id,
                         CONCAT('Expired Unused - ', expired.allocation_name) AS name,
                         -expired.unused_days AS number_of_days,
@@ -98,83 +98,145 @@ class LeaveReport(models.Model):
                         expired.allocation_date_to AS date_to,
                         expired.company_id
                     FROM (
-                        WITH
-                        -- Match each leave request to valid allocations based on date overlap
-                        matched_requests AS (
+                        WITH RECURSIVE
+                        -- 1. Explode Leaves & Check for REAL Working Days (Handles China Tiao Xiu)
+                        leaves_seq AS (
                             SELECT 
-                                req.id as request_id,
-                                req.employee_id,
-                                req.holiday_status_id,
-                                req.number_of_days as request_days,
-                                req.date_from as request_date_from,
-                                alloc.id as allocation_id,
-                                alloc.private_name as allocation_name,
-                                alloc.number_of_days as allocation_days,
-                                alloc.date_from as allocation_date_from,
-                                alloc.date_to as allocation_date_to,
-                                alloc.holiday_type,
-                                alloc.employee_company_id as company_id,
-                                -- Rank allocations by expiry date for FIFO consumption
-                                ROW_NUMBER() OVER (PARTITION BY req.id ORDER BY alloc.date_to, alloc.id) as allocation_rank
-                            FROM hr_leave req
-                            JOIN hr_leave_allocation alloc ON 
-                                req.employee_id = alloc.employee_id 
-                                AND req.holiday_status_id = alloc.holiday_status_id
-                                AND alloc.state = 'validate'
-                                AND req.state IN ('validate', 'validate1')
-                                -- Check if request date overlaps with allocation validity period
-                                AND req.date_from >= alloc.date_from 
-                                AND req.date_from <= alloc.date_to
+                                l.id as leave_id, l.employee_id, l.holiday_status_id,
+                                l.number_of_days / GREATEST(1, COUNT(*) OVER (PARTITION BY l.id)) as day_value,
+                                gs.day_date,
+                                ROW_NUMBER() OVER (PARTITION BY l.employee_id, l.holiday_status_id ORDER BY l.date_from, l.id) as global_day_rn
+                            FROM hr_leave l
+                            CROSS JOIN LATERAL generate_series(l.date_from::date, l.date_to::date, '1 day'::interval) gs(day_date)
+                            JOIN hr_employee e ON e.id = l.employee_id
+                            WHERE l.state IN ('validate', 'validate1')
+                              -- CHECK 1: Is this day defined in the employee's working schedule?
+                              AND (
+                                  EXISTS (
+                                      SELECT 1 FROM resource_calendar_attendance rca 
+                                      WHERE rca.calendar_id = e.resource_calendar_id 
+                                      AND CAST(rca.dayofweek AS INTEGER) = (EXTRACT(ISODOW FROM gs.day_date)::INTEGER - 1)
+                                  )
+                              )
+                              -- CHECK 2: Ensure it's not a Public Holiday (rcl.resource_id IS NULL means global holiday)
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM resource_calendar_leaves rcl 
+                                  WHERE (rcl.calendar_id = e.resource_calendar_id OR rcl.calendar_id IS NULL)
+                                  AND rcl.resource_id IS NULL
+                                  AND gs.day_date BETWEEN rcl.date_from::date AND rcl.date_to::date
+                              )
                         ),
-                        -- Calculate consumption for each allocation using FIFO
-                        allocation_consumption AS (
+                        -- 2. Sequence Allocations for FIFO
+                        alloc_seq AS (
                             SELECT 
-                                employee_id,
-                                holiday_status_id,
-                                allocation_id,
-                                allocation_name,
-                                allocation_days,
-                                allocation_date_from,
-                                allocation_date_to,
-                                holiday_type,
-                                company_id,
-                                SUM(request_days) as consumed_days
-                            FROM matched_requests 
-                            WHERE allocation_rank = 1  -- Only consider the first valid allocation for each request (FIFO)
-                            GROUP BY employee_id, holiday_status_id, allocation_id, allocation_name, allocation_days, allocation_date_from, allocation_date_to, holiday_type, company_id
+                                id, private_name as name, employee_id, holiday_status_id, number_of_days as capacity,
+                                date_from::date as d_from, date_to::date as d_to,
+                                holiday_type, employee_company_id as company_id,
+                                ROW_NUMBER() OVER (PARTITION BY employee_id, holiday_status_id ORDER BY date_to NULLS LAST, date_from, id) as rn
+                            FROM hr_leave_allocation
+                            WHERE state = 'validate' AND active = True
                         ),
-                        -- Calculate unused days for each allocation
-                        allocation_unused AS (
+                        -- 3. Recursive FIFO Consumption Engine
+                        consumption_trace(employee_id, holiday_status_id, day_rn, alloc_rn, remaining_day_val, remaining_alloc_cap, alloc_id) AS (
                             SELECT 
-                                alloc.employee_id,
-                                alloc.holiday_status_id,
-                                alloc.id as allocation_id,
-                                alloc.private_name as allocation_name,
-                                alloc.number_of_days as allocation_days,
-                                alloc.date_from as allocation_date_from,
-                                alloc.date_to as allocation_date_to,
-                                alloc.holiday_type,
-                                alloc.employee_company_id as company_id,
-                                COALESCE(cons.consumed_days, 0) as consumed_days,
-                                alloc.number_of_days - COALESCE(cons.consumed_days, 0) as unused_days
-                            FROM hr_leave_allocation alloc
-                            LEFT JOIN allocation_consumption cons ON 
-                                alloc.id = cons.allocation_id
-                            WHERE alloc.state = 'validate'
+                                ls.employee_id, ls.holiday_status_id, ls.global_day_rn, asq.rn,
+                                ls.day_value, asq.capacity, asq.id
+                            FROM leaves_seq ls
+                            JOIN alloc_seq asq ON ls.employee_id = asq.employee_id 
+                                AND ls.holiday_status_id = asq.holiday_status_id
+                                AND asq.rn = 1
+                            WHERE ls.global_day_rn = 1
+
+                            UNION ALL
+
+                            SELECT 
+                                t.employee_id, t.holiday_status_id,
+                                -- Move to next leave day ONLY if current day is consumed
+                                CASE 
+                                    WHEN (ls.day_date BETWEEN asq.d_from AND COALESCE(asq.d_to, '9999-12-31'))
+                                         AND t.remaining_day_val <= t.remaining_alloc_cap THEN t.day_rn + 1
+                                    WHEN (ls.day_date NOT BETWEEN asq.d_from AND COALESCE(asq.d_to, '9999-12-31')) THEN t.day_rn
+                                    ELSE t.day_rn 
+                                END,
+                                -- Move to next allocation bucket ONLY if current is exhausted OR dates don't fit
+                                CASE 
+                                    WHEN t.remaining_day_val > t.remaining_alloc_cap THEN t.alloc_rn + 1  -- Exhaustion first!
+                                    WHEN (ls.day_date NOT BETWEEN asq.d_from AND COALESCE(asq.d_to, '9999-12-31')) THEN t.alloc_rn + 1
+                                    ELSE t.alloc_rn 
+                                END,
+                                -- Remaining Leave Value
+                                CASE 
+                                    -- Day fully consumed and moved on: fetch next day's value
+                                    WHEN t.remaining_day_val <= t.remaining_alloc_cap 
+                                        THEN COALESCE((SELECT day_value FROM leaves_seq WHERE global_day_rn = t.day_rn + 1 AND employee_id = t.employee_id AND holiday_status_id = t.holiday_status_id LIMIT 1), 0)
+                                    -- Day partially consumed (allocation exhausted): carry remainder to next allocation
+                                    WHEN t.remaining_day_val > t.remaining_alloc_cap
+                                        THEN t.remaining_day_val - t.remaining_alloc_cap
+                                    -- Date mismatch: keep full remainder for next allocation
+                                    ELSE t.remaining_day_val
+                                END,
+                                -- Remaining Allocation Capacity
+                                CASE 
+                                    WHEN (ls.day_date NOT BETWEEN asq.d_from AND COALESCE(asq.d_to, '9999-12-31'))
+                                        THEN COALESCE((SELECT capacity FROM alloc_seq WHERE rn = t.alloc_rn + 1 AND employee_id = t.employee_id AND holiday_status_id = t.holiday_status_id LIMIT 1), 0)
+                                    WHEN t.remaining_day_val > t.remaining_alloc_cap
+                                        THEN COALESCE((SELECT capacity FROM alloc_seq WHERE rn = t.alloc_rn + 1 AND employee_id = t.employee_id AND holiday_status_id = t.holiday_status_id LIMIT 1), 0)
+                                    ELSE t.remaining_alloc_cap - t.remaining_day_val 
+                                END,
+                                -- Allocation ID switch
+                                CASE 
+                                    WHEN (ls.day_date NOT BETWEEN asq.d_from AND COALESCE(asq.d_to, '9999-12-31'))
+                                        THEN (SELECT id FROM alloc_seq WHERE rn = t.alloc_rn + 1 AND employee_id = t.employee_id AND holiday_status_id = t.holiday_status_id LIMIT 1)
+                                    WHEN t.remaining_day_val > t.remaining_alloc_cap
+                                        THEN (SELECT id FROM alloc_seq WHERE rn = t.alloc_rn + 1 AND employee_id = t.employee_id AND holiday_status_id = t.holiday_status_id LIMIT 1)
+                                    ELSE t.alloc_id 
+                                END
+                            FROM consumption_trace t
+                            LEFT JOIN leaves_seq ls ON ls.global_day_rn = t.day_rn AND ls.employee_id = t.employee_id AND ls.holiday_status_id = t.holiday_status_id
+                            LEFT JOIN alloc_seq asq ON asq.rn = t.alloc_rn AND asq.employee_id = t.employee_id AND asq.holiday_status_id = t.holiday_status_id
+                            WHERE (t.day_rn <= (SELECT MAX(global_day_rn) FROM leaves_seq WHERE employee_id = t.employee_id AND holiday_status_id = t.holiday_status_id))
+                              AND (t.alloc_rn <= (SELECT MAX(rn) FROM alloc_seq WHERE employee_id = t.employee_id AND holiday_status_id = t.holiday_status_id))
+                        ),
+                        -- 4. Final Consumption Summary
+                        final_consumption AS (
+                            SELECT 
+                                asq.id as alloc_id,
+                                CASE 
+                                    WHEN (
+                                        SELECT t.remaining_day_val > t.remaining_alloc_cap
+                                        FROM consumption_trace t
+                                        WHERE t.alloc_id = asq.id
+                                        ORDER BY t.day_rn DESC, t.alloc_rn DESC
+                                        LIMIT 1
+                                    )
+                                    THEN asq.capacity
+                                    ELSE GREATEST(
+                                        asq.capacity - (
+                                            SELECT MIN(remaining_alloc_cap) 
+                                            FROM consumption_trace 
+                                            WHERE alloc_id = asq.id
+                                        ),
+                                        0
+                                    )
+                                END as used_qty
+                            FROM alloc_seq asq
+                            WHERE EXISTS (SELECT 1 FROM consumption_trace WHERE alloc_id = asq.id)
                         )
-                        -- Return individual allocation records that have expired unused days
+                        -- Return expired unused allocations
                         SELECT
-                            employee_id,
-                            holiday_status_id,
-                            allocation_id,
-                            allocation_name,
-                            allocation_date_from,
-                            allocation_date_to,
-                            holiday_type,
-                            company_id,
-                            unused_days
-                        FROM allocation_unused
-                        WHERE allocation_date_to < CURRENT_DATE AND unused_days > 0
+                            ao.employee_id,
+                            ao.holiday_status_id,
+                            ao.id as allocation_id,
+                            ao.name as allocation_name,
+                            ao.d_from::timestamp as allocation_date_from,
+                            ao.d_to::timestamp as allocation_date_to,
+                            ao.holiday_type,
+                            ao.company_id,
+                            (ao.capacity - COALESCE(fc.used_qty, 0)) as unused_days
+                        FROM alloc_seq ao
+                        LEFT JOIN final_consumption fc ON ao.id = fc.alloc_id
+                        WHERE ao.d_to < CURRENT_DATE 
+                          AND (ao.capacity - COALESCE(fc.used_qty, 0)) > 0.001
                     ) AS expired
                     LEFT JOIN hr_employee emp ON expired.employee_id = emp.id
                 )

@@ -16,9 +16,8 @@ RUN echo "deb-src http://mirrors.tencent.com/debian/ bullseye-backports main non
 
 RUN cat /etc/apt/sources.list
 
-RUN apt-get  update && \
-    apt-get install  -y locales curl&& \
-    rm -rf /var/lib/apt/lists/*
+RUN apt-get update -o Acquire::https::Verify-Peer=false && \
+    apt-get install -y -o Acquire::https::Verify-Peer=false locales curl ca-certificates
 
 # Reconfigure locales such that postgresql uses UTF-8 encoding
 RUN dpkg-reconfigure locales && \
